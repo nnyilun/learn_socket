@@ -38,6 +38,8 @@ class Server_Socket{
         void connectSocket();
         void listenConnection(int queueLen=5);
         void acceptConnection();
+        void tcp_send();
+        void tcp_receive();
 
         void printIPaddr();
 };
