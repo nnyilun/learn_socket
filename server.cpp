@@ -17,6 +17,8 @@
 #include <netdb.h>
 #include "include/color.hpp"
 
+const int HOSTNAME_MAXLEN = 64;
+
 class Server_Socket{
     private:
         int _protocol;
@@ -26,6 +28,7 @@ class Server_Socket{
         struct addrinfo hints;
         struct addrinfo *serverinfo;
         int _server_socket_file_descriptor; 
+        char hostName[HOSTNAME_MAXLEN];
         // fd_set connected_client_file_descriptor;
         std::vector<int> connected_client_file_descriptor;
 
@@ -41,14 +44,17 @@ class Server_Socket{
         int connectSocket();
         int listenConnection(int queueLen=5);
         int acceptConnection();
+        
         int Close(int Socket_FD_num);
         int Shutdown(int Socket_FD_num, int behavior);
 
-        template<typename T> int Send(int Socket_FD_num, const T &data);
+        int Send(int Socket_FD_num, void *data, size_t len);
         int Receive(int Socket_FD_num, void *data, size_t len);
         int Sendto(std::string ip, std::string port, const std::string &msg);
         int Receivefrom(std::string ip, std::string port, std::string &msg);
 
+        int run_poll();
+        
         int getSocketFD(int Socket_FD_num);
         std::vector<int>& getFDList();
         void printIPaddr();
@@ -78,14 +84,22 @@ Server_Socket::Server_Socket(const char *ip, std::string server, int protocol, i
     }
     // FD_ZERO(&connected_client_file_descriptor);
     std::cout << FRONT_GREEN << "Construct server socket info successfully!" << RESET_COLOR << std::endl;
-    char hostName[64] = {0};
-    gethostname(hostName, 64);
+    gethostname(hostName, HOSTNAME_MAXLEN);
     std::cout << "local name: " << BOLD << hostName << RESET_COLOR << std::endl;
     printIPaddr();
 }
 
 Server_Socket::~Server_Socket(){
     freeaddrinfo(serverinfo);
+    try{
+        int status = close(_server_socket_file_descriptor);
+        if(status == -1) throw("close error when destruct server socket!");
+    }
+    catch(const char *err){
+        std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
+        return;
+    }
     std::cout << FRONT_GREEN << "Destruct server socket successfully!" << RESET_COLOR << std::endl;
 }
 
@@ -96,7 +110,7 @@ int Server_Socket::createSocket(){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     std::cout << FRONT_GREEN << "create socket successfully!" << RESET_COLOR << std::endl;
@@ -105,13 +119,15 @@ int Server_Socket::createSocket(){
 
 int Server_Socket::bindSocket(){
     // bind the special port and IP to the socket
+    // int reuse = 1;
+    // setsockopt(_server_socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int));
     try{
         int status = bind(_server_socket_file_descriptor, serverinfo->ai_addr, serverinfo->ai_addrlen);
         if(status == -1) throw("bind error!");
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     std::cout << FRONT_GREEN << "bind successfully!" << RESET_COLOR << std::endl;
@@ -126,7 +142,7 @@ int Server_Socket::connectSocket(){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     std::cout << FRONT_GREEN << "connect successfully!" << RESET_COLOR << std::endl;
@@ -149,7 +165,7 @@ int Server_Socket::listenConnection(int queueLen){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     std::cout << FRONT_GREEN << "listen successfully!" << RESET_COLOR << std::endl;
@@ -166,6 +182,7 @@ int Server_Socket::acceptConnection(){
         If you’re only getting one single connection, 
         you can close() the listening sockfd in order to prevent more incoming connections on the same port.
     */
+    std::cout << FRONT_YELLOW << "accepting..." << RESET_COLOR << std::endl;
     try{
         struct sockaddr_storage client_addr;
         socklen_t addr_len = sizeof(client_addr);
@@ -176,10 +193,11 @@ int Server_Socket::acceptConnection(){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
-    printf("%saccept a connection!%s\n  FD_num:%lu, FD:%d\n", FRONT_GREEN, RESET_COLOR, connected_client_file_descriptor.size() - 1, connected_client_file_descriptor.back());
+    Send(connected_client_file_descriptor.size() - 1, hostName, strlen(hostName) + 1);
+    printf("%saccept a connection!%s\n-FD_num:%lu, FD:%d\n", FRONT_GREEN, RESET_COLOR, connected_client_file_descriptor.size() - 1, connected_client_file_descriptor.back());
     return connected_client_file_descriptor.size() - 1;
 }
 
@@ -191,7 +209,7 @@ int Server_Socket::Close(int Socket_FD_num){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     catch(const std::out_of_range &err){
@@ -211,7 +229,7 @@ int Server_Socket::Shutdown(int Socket_FD_num, int behavior){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     catch(const std::out_of_range &err){
@@ -224,29 +242,27 @@ int Server_Socket::Shutdown(int Socket_FD_num, int behavior){
     return 0;
 }
 
-template<typename T>
-int Server_Socket::Send(int Socket_FD_num, const T &data){
+int Server_Socket::Send(int Socket_FD_num, void *data, size_t len){
+    void *_ = data;
     try{
-        size_t _len = sizeof(data);
-        void *_data = static_cast<void*>(&data);
-        int status = send(connected_client_file_descriptor.at(Socket_FD_num), _data, _len, 0);
+        int status = send(connected_client_file_descriptor.at(Socket_FD_num), _, len, 0);
         while(status != 0){
             if(status == -1) throw("tcp send error!");
-            _data = static_cast<void*>(static_cast<char*>(_data) + status);
-            _len -= status;
-            status = send(connected_client_file_descriptor[Socket_FD_num], _data, _len, 0);
+            _ = static_cast<void*>(static_cast<char*>(data) + status);
+            len -= status;
+            status = send(connected_client_file_descriptor[Socket_FD_num], _, len, 0);
         }
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     catch(const std::out_of_range &err){
         std::cerr << FRONT_RED << err.what() << std::endl;
         return -1;
     }
-    std::cout << FRONT_DARKGREEN << " <--- " << RESET_COLOR << data << std::endl;
+    std::cout << FRONT_DARKGREEN << Socket_FD_num << " <--- " << RESET_COLOR << (char*)data << std::endl;
     return 0;
 }
 
@@ -258,7 +274,7 @@ int Server_Socket::Receive(int Socket_FD_num, void *data, size_t len){
     }
     catch(const char *err){
         std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-        printf("Error NO.%d: %s\n", errno, strerror(errno));
+        printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
     catch(const std::out_of_range &err){
@@ -280,6 +296,11 @@ int Server_Socket::Sendto(std::string ip, std::string port, const std::string &m
 }
 
 int Server_Socket::Receivefrom(std::string ip, std::string port, std::string &msg){
+    // TODO
+    return 0;
+}
+
+int Server_Socket::run_poll(){
     // TODO
     return 0;
 }
@@ -326,6 +347,11 @@ void Server_Socket::printIPaddr(){
 int main(int argc, char **argv){
     int protocol = SOCK_STREAM;
     char *p = nullptr;
-    Server_Socket ttt(p, "6666", protocol, 64);
+    Server_Socket ttt(p, "10001", protocol, 64);
+    ttt.createSocket();
+    ttt.bindSocket();
+    // ttt.connectSocket();
+    ttt.listenConnection(10);
+    ttt.acceptConnection();
     return 0;
 }
