@@ -19,6 +19,9 @@ class Client_Socket{
         Client_Socket(const Client_Socket&) = delete;
         Client_Socket(Client_Socket&&) = delete;
 
+        void createSocket();
+        void bindSocket();
+        void connectSocket();
 
 };
 
