@@ -4,6 +4,10 @@
 #include <string>
 #include <cstdio>
 #include <vector>
+#include <map>
+#include <mutex>
+#include <memory>
+#include <thread>
 // #include <exception>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -29,8 +33,23 @@ class Server_Socket{
         struct addrinfo *serverinfo;
         int _server_socket_file_descriptor; 
         char hostName[HOSTNAME_MAXLEN];
-        // fd_set connected_client_file_descriptor;
         std::vector<int> connected_client_file_descriptor;
+        std::mutex FD_mutex;
+        std::map<int, std::pair<std::thread, int>> thread_session;
+        class Session{
+            private:
+                int chatroom_owner_FD;
+                std::vector<int> client_FD;
+            
+            public:
+                Session() = delete;
+                Session(int owner_FD);
+                virtual ~Session();
+                Session(const Session&) = delete;
+                Session(Session&&) = delete;
+
+                int run();
+        };
 
     public:
         Server_Socket() = delete;
@@ -39,6 +58,7 @@ class Server_Socket{
         Server_Socket(const Server_Socket&) = delete;
         Server_Socket(Server_Socket&&) = delete;
 
+        int Create();
         int createSocket();
         int bindSocket();
         int connectSocket();
@@ -54,6 +74,7 @@ class Server_Socket{
         int Receivefrom(std::string ip, std::string port, std::string &msg);
 
         int run_poll();
+        int run();
         
         int getSocketFD(int Socket_FD_num);
         std::vector<int>& getFDList();
@@ -103,6 +124,34 @@ Server_Socket::~Server_Socket(){
     std::cout << FRONT_GREEN << "Destruct server socket successfully!" << RESET_COLOR << std::endl;
 }
 
+int Server_Socket::Create(){
+    std::cout << "start..." <<std::endl;
+    try{
+        std::cout << FRONT_YELLOW << "choosing available address..." << RESET_COLOR <<std::endl;
+        int yes = 1;
+        struct addrinfo *p = serverinfo;
+        for(; p != nullptr; p = p->ai_next){
+            _server_socket_file_descriptor = socket(p->ai_family, p->ai_socktype, p->ai_protocol); 
+            if(_server_socket_file_descriptor < 0)continue;
+            if(bindSocket() < 0){
+                close(_server_socket_file_descriptor);
+                continue;
+            }
+            break;
+        }
+        freeaddrinfo(serverinfo);
+        if(p == NULL) throw("invalid serverinfo!");
+        if(listenConnection() != 0) throw("listen error!");
+        std::cout << FRONT_GREEN << "server listen FD:" << _server_socket_file_descriptor << RESET_COLOR << std::endl;
+    }
+    catch(const char *err){
+        std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
+        return -1;
+    }
+    std::cout << FRONT_GREEN << "create socket successfully!" << RESET_COLOR << std::endl;
+    return 0;
+}
+
 int Server_Socket::createSocket(){
     try{
         _server_socket_file_descriptor = socket(serverinfo->ai_family, serverinfo->ai_socktype, serverinfo->ai_protocol);
@@ -122,6 +171,8 @@ int Server_Socket::bindSocket(){
     // int reuse = 1;
     // setsockopt(_server_socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int));
     try{
+        int yes = 1;
+        setsockopt(_server_socket_file_descriptor, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
         int status = bind(_server_socket_file_descriptor, serverinfo->ai_addr, serverinfo->ai_addrlen);
         if(status == -1) throw("bind error!");
     }
@@ -187,7 +238,8 @@ int Server_Socket::acceptConnection(){
         struct sockaddr_storage client_addr;
         socklen_t addr_len = sizeof(client_addr);
         int new_fd = accept(_server_socket_file_descriptor, (struct sockaddr *)&client_addr, &addr_len);
-        if(new_fd == -1) throw("accept error!");
+        if(new_fd == -1) throw("accept error!"); 
+        std::lock_guard<std::mutex> lock(FD_mutex);
         connected_client_file_descriptor.push_back(new_fd);
         // FD_SET(new_fd, &connected_client_file_descriptor);
     }
@@ -196,7 +248,6 @@ int Server_Socket::acceptConnection(){
         printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return errno;
     }
-    Send(connected_client_file_descriptor.size() - 1, hostName, strlen(hostName) + 1);
     printf("%saccept a connection!%s\n-FD_num:%lu, FD:%d\n", FRONT_GREEN, RESET_COLOR, connected_client_file_descriptor.size() - 1, connected_client_file_descriptor.back());
     return connected_client_file_descriptor.size() - 1;
 }
@@ -216,6 +267,7 @@ int Server_Socket::Close(int Socket_FD_num){
         std::cerr << FRONT_RED << err.what() << std::endl;
         return -1;
     }
+    std::lock_guard<std::mutex> lock(FD_mutex);
     connected_client_file_descriptor.erase(connected_client_file_descriptor.begin() + Socket_FD_num);
     std::cout << "close " << Socket_FD_num << ":" << BOLD << _FD << RESET_COLOR << "successfully!" << std::endl;
     return 0;
@@ -236,7 +288,10 @@ int Server_Socket::Shutdown(int Socket_FD_num, int behavior){
         std::cerr << FRONT_RED << err.what() << std::endl;
         return -1;
     }
-    if(behavior == 2) connected_client_file_descriptor.erase(connected_client_file_descriptor.begin() + Socket_FD_num);
+    if(behavior == 2) {
+        std::lock_guard<std::mutex> lock(FD_mutex);
+        connected_client_file_descriptor.erase(connected_client_file_descriptor.begin() + Socket_FD_num);
+    }
     std::cout << "shutdown " << Socket_FD_num << ":" << BOLD << _FD << RESET_COLOR << "successfully!" << std::endl;
     std::cout << "behavior:" << FRONT_YELLOW << behavior << RESET_COLOR << std::endl;
     return 0;
@@ -281,7 +336,7 @@ int Server_Socket::Receive(int Socket_FD_num, void *data, size_t len){
         std::cerr << FRONT_RED << err.what() << std::endl;
         return -1;
     }
-    std::cout << FRONT_BLUE << "---> " << RESET_COLOR << *(char*)data << std::endl;
+    std::cout << FRONT_BLUE << "---> " << RESET_COLOR << (char*)data << std::endl;
     if(status == 0){
         std::cout << FRONT_BLACK 
             << "receive 0 byte data! the remote side has closed the connection!" 
@@ -348,10 +403,6 @@ int main(int argc, char **argv){
     int protocol = SOCK_STREAM;
     char *p = nullptr;
     Server_Socket ttt(p, "10001", protocol, 64);
-    ttt.createSocket();
-    ttt.bindSocket();
-    // ttt.connectSocket();
-    ttt.listenConnection(10);
-    ttt.acceptConnection();
+    ttt.Create();
     return 0;
 }
