@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <functional>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -23,9 +24,11 @@ class Client_Socket{
         struct addrinfo hints;
         struct addrinfo *serverinfo;
         std::thread receive;
-        int Receive();
         std::atomic<int> recv_status;
+    private:
+        int Receive();
         void* get_in_addr(struct sockaddr *sa);
+        std::function<int()> r = [&]{return Receive();};
 
     public:
         Client_Socket() = delete;
@@ -35,7 +38,7 @@ class Client_Socket{
         Client_Socket(Client_Socket&&) = delete;
 
         int create();
-        void run();
+        int run();
 
 };
 
@@ -49,25 +52,24 @@ Client_Socket::Client_Socket(const char *ip, std::string server, int protocol){
     hints.ai_socktype = _protocol; // TCP stream sockets
 
     try{
-        int status = getaddrinfo(_server.c_str(), ip, &hints, &serverinfo);
+        int status = getaddrinfo(ip, _server.c_str(), &hints, &serverinfo);
         if(status != 0) throw(gai_strerror(status));
     }
     catch(const char *err){
         std::cerr << err << std::endl;
         exit(-1);
     }
-    std::cout << "Construct client socket successfully!" << std::endl;
+    std::cout << "<client> " << "Construct client socket successfully!" << std::endl;
 }
 
 Client_Socket::~Client_Socket(){
-    freeaddrinfo(serverinfo);
-    std::cout << "Destruct client socket successfully!" << std::endl;
+    std::cout << "<client> " << "Destruct client socket successfully!" << std::endl;
 }
 
 int Client_Socket::create(){
-    std::cout << "start..." <<std::endl;
+    std::cout << "<client> " << "start..." <<std::endl;
     try{
-        std::cout << FRONT_YELLOW << "choosing available address..." << RESET_COLOR <<std::endl;
+        std::cout << "<client> " << FRONT_YELLOW << "choosing available address..." << RESET_COLOR <<std::endl;
         int yes = 1;
         struct addrinfo *p = serverinfo;
         for(; p != nullptr; p = p->ai_next){
@@ -80,16 +82,16 @@ int Client_Socket::create(){
             }
             break;
         }
-        if(p == NULL) throw("invalid serverinfo!");
+        if(p == NULL) throw("can not connect to server!");
         freeaddrinfo(serverinfo);
         inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr), serverAddr, sizeof(serverAddr));
-        std::cout << "client connecting to " << BOLD << serverAddr << RESET_COLOR << std::endl;
+        std::cout << "<client> " << "client connecting to " << BOLD << serverAddr << RESET_COLOR << std::endl;
     }
     catch(const char *err){
-        std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
+        std::cerr << "<client> " << FRONT_RED << err << RESET_COLOR << std::endl;
         return -1;
     }
-    std::cout << FRONT_GREEN << "connect to server successfully!" << RESET_COLOR << std::endl;
+    std::cout << "<client> " << FRONT_GREEN << "connect to server successfully!" << RESET_COLOR << std::endl;
     return 0;
 }
 
@@ -107,24 +109,28 @@ int Client_Socket::Receive(){
             return -1;
         }
         // std::cout << FRONT_DARKGREEN << "server" << RESET_COLOR;
-        std::cout << FRONT_BLUE << "---> " << RESET_COLOR << buf << std::endl;
+        std::cout << buf;
         if(status == 0){
-            std::cout << FRONT_BLACK 
+            std::cout << "<client> " << FRONT_BLACK 
                 << "receive 0 byte data! the remote side has closed the connection!" 
                 << RESET_COLOR << std::endl;
+            return -2;
         }
     }
     recv_status = 0;
     return 0;
 }
 
-void Client_Socket::run(){
-    std::cout << "--------------------" << std::endl;
+int Client_Socket::run(){
+    std::cout << "<client> " << "--------------------" << std::endl;
     recv_status = 1;
-    receive = std::thread(&Client_Socket::Receive);
+    receive = std::thread(r);
     receive.detach();
     
     while(true){
+        if(recv_status == 0){
+            break;
+        }
         std::string msg;
         std::getline(std::cin, msg);
         char *data = static_cast<char*>(malloc(msg.length() + 1));
@@ -139,19 +145,16 @@ void Client_Socket::run(){
                 len -= status;
                 status = send(server_FD, _, len, 0);
             }
-            if(recv_status == 0){
-                break;
-            }
         }
         catch(const char *err){
-            std::cerr << FRONT_RED << err << RESET_COLOR << std::endl;
-            printf("-Error NO.%d: %s\n", errno, strerror(errno));
-            break;
+            std::cerr << "<client> " << FRONT_RED << err << RESET_COLOR << std::endl;
+            printf("<client> -Error NO.%d: %s\n", errno, strerror(errno));
+            return -1;
         }
-        std::cout << FRONT_DARKGREEN << "server <--- " << RESET_COLOR << (char*)data << std::endl;
-        break;
+        // std::cout << FRONT_DARKGREEN << " <--- " << RESET_COLOR << (char*)data << std::endl;
     }
     close(server_FD);
+    return 0;
 }
 
 void* Client_Socket::get_in_addr(struct sockaddr *sa){
@@ -163,7 +166,6 @@ void* Client_Socket::get_in_addr(struct sockaddr *sa){
 
 int main(){
     Client_Socket client1("localhost", "10001", SOCK_STREAM);
-    client1.create();
-    client1.run();
+    client1.create() == 0 ? client1.run() : 0;
     return 0;
 }
