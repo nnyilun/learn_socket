@@ -43,6 +43,8 @@ class Server_Socket{
         std::thread session_thread;
         std::mutex FD_mutex;
         std::map<int, std::pair<std::future<int>, int>> _session;
+        
+    private:
         std::function<bool(char*)> isValue = [&](char* name){
             for(auto &i : client_name){
                 if(i.second == std::string(name)) return true;
@@ -58,17 +60,18 @@ class Server_Socket{
             }
             return false;
         };
-        std::function<bool(char*, std::string&)> parser = [&](char *msg, std::string &name){
-            char tmp[] = "/send ", userName[USERNAME_LEN] = {0};
+        std::function<bool(char*, std::string&, std::string&)> parser = [&](char *msg, std::string &name, std::string &m){
+            char tmp[] = "/send ", userName[USERNAME_LEN] = {0}, _[BUF_LEN] = {0};
             if(strncmp(tmp, msg, 6) != 0)return false;
             char *pos1 = msg + 6, *pos2 = pos1 + 1;
             while(*pos2 != '\0' && *pos2 != ' ') ++pos2;
             if(*pos2 == '0')return false;
-            strncpy(userName, pos1, pos2 - pos1 - 1);
+            strncpy(userName, pos1, pos2 - pos1);
+            strcpy(_, pos2 + 1);
             name = std::string(userName);
+            m = std::string(_);
             return true;
         };
-    private:
         void* get_in_addr(struct sockaddr *sa);
         class Session{
             private:
@@ -257,15 +260,6 @@ int Server_Socket::listenConnection(int queueLen){
 }
 
 int Server_Socket::acceptConnection(){
-    /* 
-        call accept() to get the pending connection. 
-        It’ll return a new socket file descriptor to use for this single connection.
-        The original one is still listening for more new connections, 
-        and the newly created one is finally ready to send() and recv().
-
-        If you’re only getting one single connection, 
-        you can close() the listening sockfd in order to prevent more incoming connections on the same port.
-    */
     std::cout << "<server> " << FRONT_YELLOW << "accepting..." << RESET_COLOR << std::endl;
     try{
         struct sockaddr_storage client_addr;
@@ -318,7 +312,7 @@ int Server_Socket::Receive(int Socket_FD, void *data, size_t len){
         printf("-Error NO.%d: %s\n", errno, strerror(errno));
         return -1;
     }
-    std::cout << "<server> " << FRONT_BLUE << Socket_FD << " -> " << RESET_COLOR << (char*)data << std::endl;
+    std::cout << "<server> " << Socket_FD << FRONT_BLUE << " -> " << RESET_COLOR << (char*)data << std::endl;
     if(status == 0){
         std::cout << "<server> " << FRONT_WHITE 
             << "receive 0 byte data, " << BOLD << Socket_FD << RESET_COLOR << " has closed the connection!" 
@@ -350,6 +344,7 @@ int Server_Socket::run_poll(){
     std::string user_name;
     char buf[BUF_LEN] = {0};
     char msg[BUF_LEN + USERNAME_LEN + 10] = {0};
+    int msg_len;
     while(true){
         int poll_count = poll(pfds, fd_length, -1);
 
@@ -439,12 +434,24 @@ int Server_Socket::run_poll(){
                         }
                     }
                     else{
-                        std::string temp = client_name[sender_fd] + FRONT_BLUE + std::string(" -> ") + RESET_COLOR + std::string(buf) + std::string("\n\0");
-                        strcpy(msg, temp.c_str());
-                        int msg_len = strlen(msg);
-                        for(int j = 0; j < fd_length; ++j){
-                            if(pfds[j].fd == _server_socket_file_descriptor || pfds[j].fd == sender_fd) continue;
-                            Send(pfds[j].fd, msg, msg_len);
+                        std::string toPingUser, toMsg;
+                        int to_fd;
+                        if(parser(buf, toPingUser, toMsg) && getFD(toPingUser, to_fd) && to_fd != sender_fd){
+                            std::string temp = client_name[sender_fd] + FRONT_BLUE + std::string(" -> ") + RESET_COLOR 
+                                + std::string(FRONT_PURPLE) +std::string("<private> ") + RESET_COLOR
+                                + toMsg + std::string("\n\0");
+                            strcpy(msg, temp.c_str());
+                            msg_len = strlen(msg);
+                            Send(to_fd, msg, msg_len);
+                        }
+                        else{
+                            std::string temp = client_name[sender_fd] + FRONT_BLUE + std::string(" -> ") + RESET_COLOR + std::string(buf) + std::string("\n\0");
+                            strcpy(msg, temp.c_str());
+                            msg_len = strlen(msg);
+                            for(int j = 0; j < fd_length; ++j){
+                                if(pfds[j].fd == _server_socket_file_descriptor || pfds[j].fd == sender_fd) continue;
+                                Send(pfds[j].fd, msg, msg_len);
+                            }
                         }
                     }                    
                 }   //recv

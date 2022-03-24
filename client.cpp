@@ -11,7 +11,6 @@
 #include <netdb.h>
 #include "include/color.hpp"
 
-const int MAX_SERVER_NAME_LEN = 64;
 const int MAX_BUF_LEN = 256;
 
 class Client_Socket{
@@ -20,7 +19,6 @@ class Client_Socket{
         std::string _server;
         std::string _IP;
         int server_FD;
-        char serverAddr[MAX_SERVER_NAME_LEN] = {0};
         struct addrinfo hints;
         struct addrinfo *serverinfo;
         std::thread receive;
@@ -28,7 +26,7 @@ class Client_Socket{
     private:
         int Receive();
         void* get_in_addr(struct sockaddr *sa);
-        std::function<int()> r = [&]{return Receive();};
+        // std::function<int()> r = [&]{return Receive();};
 
     public:
         Client_Socket() = delete;
@@ -84,8 +82,10 @@ int Client_Socket::create(){
         }
         if(p == NULL) throw("can not connect to server!");
         freeaddrinfo(serverinfo);
-        inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr), serverAddr, sizeof(serverAddr));
-        std::cout << "<client> " << "client connecting to " << BOLD << serverAddr << RESET_COLOR << std::endl;
+
+        std::cout << "<client> " << "client connecting to " << std::endl
+            << "<client> -IP: "<< BOLD << _IP << RESET_COLOR << std::endl
+            << "<client> -port: " << BOLD << _server << RESET_COLOR << std::endl; 
     }
     catch(const char *err){
         std::cerr << "<client> " << FRONT_RED << err << RESET_COLOR << std::endl;
@@ -124,7 +124,7 @@ int Client_Socket::Receive(){
 int Client_Socket::run(){
     std::cout << "<client> " << "--------------------" << std::endl;
     recv_status = 1;
-    receive = std::thread(r);
+    receive = std::thread(&Client_Socket::Receive, this);
     receive.detach();
     
     while(true){
