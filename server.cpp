@@ -286,7 +286,7 @@ int Server_Socket::Send(int Socket_FD, void *data, size_t len){
     try{
         int status = send(Socket_FD, _, len, 0);
         while(status != 0){
-            if(status == -1) throw("tcp send error!");
+            if(status == -1) throw("send error!");
             _ = static_cast<void*>(static_cast<char*>(data) + status);
             len -= status;
             status = send(Socket_FD, _, len, 0);
@@ -305,7 +305,7 @@ int Server_Socket::Receive(int Socket_FD, void *data, size_t len){
     int status = 0;
     try{
         status = recv(Socket_FD, data, len, 0);
-        if(status == -1) throw("tcp receive error!");
+        if(status == -1) throw("receive error!");
     }
     catch(const char *err){
         std::cerr << "<server> " << FRONT_RED << err << RESET_COLOR << std::endl;
