@@ -470,7 +470,7 @@ int Server_Socket::run(){
 void Server_Socket::printIPaddr(){
     // serverinfo is the head of a linked list
     std::cout << "<server> " << "--------------------" << std::endl;
-    printf("<server> IP addresses for %s%s:%s\n", BOLD, _IP.size() ? _IP.c_str() : "INET_ADDR_ANY", RESET_COLOR);
+    printf("<server> IP addresses for %s%s%s on port %s%s%s:\n", BOLD, _IP.size() ? _IP.c_str() : "INET_ADDR_ANY", RESET_COLOR, BOLD, _server.c_str(), RESET_COLOR);
     for(auto p = serverinfo; p != nullptr; p = p->ai_next) {
         void *addr;
         std::string ipver;
